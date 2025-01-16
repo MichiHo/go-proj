@@ -1,4 +1,4 @@
-module github.com/twpayne/go-proj/v10
+module github.com/michiho/go-proj/v10
 
 go 1.21
 

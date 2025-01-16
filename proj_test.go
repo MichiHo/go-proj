@@ -6,7 +6,7 @@ import (
 
 	"github.com/alecthomas/assert/v2"
 
-	"github.com/twpayne/go-proj/v10"
+	"github.com/michiho/go-proj/v10"
 )
 
 func TestRadToDeg(t *testing.T) {

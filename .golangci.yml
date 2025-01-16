@@ -118,9 +118,9 @@ linters-settings:
     sections:
     - standard
     - default
-    - prefix(github.com/twpayne/go-proj)
+    - prefix(github.com/michiho/go-proj)
   goimports:
-    local-prefixes: github.com/twpayne/go-proj
+    local-prefixes: github.com/michiho/go-proj
 
 issues:
   exclude-rules:
