@@ -2,7 +2,7 @@
 package proj
 
 // #cgo pkg-config: proj
-// #include "go-proj.h"
+// #include <proj.h>
 import "C"
 
 import (
