@@ -1,0 +1,46 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go-proj",
+    srcs = [
+        "context.go",
+        "float64slices.go",
+        "pj.go",
+        "proj.go",
+        "go-proj.h",
+    ],
+    cgo = True,
+    importpath = "github.com/michiho/go-proj/v10",
+    visibility = ["//visibility:public"],
+    cdeps = [
+        "go-proj_c"
+    ]
+)
+
+go_test(
+    name = "go-proj_test",
+    srcs = [
+        "context_test.go",
+        "example_test.go",
+        "float64slices_test.go",
+        "pj_test.go",
+        "proj_test.go",
+        "go-proj.h",
+    ],
+    deps = [
+        "@com_github_alecthomas_assert_v2//:go_default_library",
+        "go-proj"
+    ],
+    cgo = True,
+    cdeps = [
+        "go-proj_c"
+    ]
+)
+
+cc_library(
+    name = "go-proj_c",
+    srcs = ["go-proj.c"],
+    hdrs = ["go-proj.h"],
+    copts = ["-I/usr/include"],
+    linkopts = ["-L/usr/lib/x86_64-linux-gnu/", "-lproj"],
+)
