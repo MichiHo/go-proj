@@ -1,6 +1,6 @@
 package proj
 
-// #include <proj.h>
+// #include "go-proj.h"
 import "C"
 
 import (
