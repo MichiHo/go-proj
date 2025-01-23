@@ -93,6 +93,13 @@ func (pj *PJ) Geod(a, b Coord) (float64, float64, float64) {
 	return (float64)(cGeod.s), (float64)(cGeod.a1), (float64)(cGeod.a2)
 }
 
+// GetLastUsedOperation returns the operation used in the last call to Trans.
+func (pj *PJ) GetLastUsedOperation() (*PJ, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+	return pj.context.newPJ(C.proj_trans_get_last_used_operation(pj.pj))
+}
+
 // Info returns information about pj.
 func (pj *PJ) Info() PJInfo {
 	pj.context.Lock()
