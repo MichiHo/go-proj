@@ -1,6 +1,7 @@
 package proj_test
 
 import (
+	_ "embed"
 	"runtime"
 	"strconv"
 	"testing"
@@ -153,4 +154,61 @@ func TestContext_SetSearchPaths(t *testing.T) {
 	context.SetSearchPaths([]string{})
 	context.SetSearchPaths([]string{"/tmp/data"})
 	context.SetSearchPaths([]string{"/tmp/data", "/tmp/data2"})
+}
+
+func Test_GetAuthoritiesFromDatabase(t *testing.T) {
+	res, err := proj.GetAuthoritiesFromDatabase()
+	if err != nil {
+		t.Fatalf("error %s", err.Error())
+	}
+
+	assertSliceEqualOrderInvariant(t, []string{
+		"EPSG", "ESRI", "IAU_2015", "IGNF", "NKG", "PROJ", "OGC",
+	}, res)
+}
+
+func Test_GetAllCRSCodes(t *testing.T) {
+	res, err := proj.GetAllCRSCodes()
+	if err != nil {
+		t.Fatalf("error %s", err.Error())
+	}
+
+	expectedLength := 10889
+	if len(res) != expectedLength {
+		t.Errorf("unexpected length of codes list: %d, expected %d", len(res), expectedLength)
+	}
+}
+
+func assertSliceEqualOrderInvariant(tb testing.TB, expected, actual []string) {
+	tb.Helper()
+
+	expectedItems := make(map[string]int, len(expected))
+	for _, item := range expected {
+		count, ok := expectedItems[item]
+		if !ok {
+			expectedItems[item] = 1
+		} else {
+			expectedItems[item] = count + 1
+		}
+	}
+
+	for _, item := range actual {
+		remainingCount, ok := expectedItems[item]
+		if !ok {
+			tb.Errorf("unexpected item %s", item)
+		}
+
+		expectedItems[item] = remainingCount - 1
+	}
+
+	for item, remainingCount := range expectedItems {
+		if remainingCount > 0 {
+			tb.Errorf("expected %d more occurrences of %s", remainingCount, item)
+		}
+		if remainingCount < 0 {
+			tb.Errorf("expected %d less occurrences of %s", -remainingCount, item)
+		}
+	}
+	assert.Equal(tb, len(expected), len(actual))
+
 }

@@ -115,6 +115,19 @@ func (pj *PJ) Info() PJInfo {
 	}
 }
 
+// GetSRID returns the Spatial Reference Identifier, like "EPSG","4326", for pj.
+func (pj *PJ) GetSRID() (auth string, code string) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	auth_ := C.proj_get_id_auth_name(pj.pj, 0)
+	auth = C.GoString(auth_)
+
+	code_ := C.proj_get_id_code(pj.pj, 0)
+	code = C.GoString(code_)
+	return
+}
+
 // IsCRS returns whether pj is a CRS.
 func (pj *PJ) IsCRS() bool {
 	return C.proj_is_crs(pj.pj) != 0

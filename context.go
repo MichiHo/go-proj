@@ -5,6 +5,7 @@ package proj
 import "C"
 
 import (
+	"fmt"
 	"runtime"
 	"sync"
 	"unsafe"
@@ -159,6 +160,57 @@ func (c *Context) Unlock() {
 	c.mutex.Unlock()
 }
 
+func (c *Context) GetAuthoritiesFromDatabase() ([]string, error) {
+	c.Lock()
+	defer c.Unlock()
+
+	cAuthorities := C.proj_get_authorities_from_database(c.pjContext)
+	if err := c.checkError(); err != nil {
+		return nil, err
+	}
+	defer C.proj_string_list_destroy(cAuthorities)
+
+	authorities := nullTerminatedListToGoSlice(cAuthorities)
+	return authorities, nil
+}
+
+func (c *Context) GetAllCRSCodes() ([]string, error) {
+	c.Lock()
+	defer c.Unlock()
+
+	cAuthorities := C.proj_get_authorities_from_database(c.pjContext)
+	if err := c.checkError(); err != nil {
+		return nil, fmt.Errorf("failed to list authorities from database: %w", err)
+	}
+	defer C.proj_string_list_destroy(cAuthorities)
+
+	authorities := nullTerminatedListToGoSlice(cAuthorities)
+
+	codeList := make([]string, 0)
+	for _, auth := range authorities {
+		cAuth := C.CString(auth)
+		defer C.free(unsafe.Pointer(cAuth))
+
+		cCodes := C.proj_get_codes_from_database(
+			c.pjContext,
+			cAuth,
+			C.PJ_TYPE_CRS,
+			0,
+		)
+		if err := c.checkError(); err != nil {
+			return nil, fmt.Errorf("failed to list codes for authority %s: %w", auth, err)
+		}
+		defer C.proj_string_list_destroy(cCodes)
+
+		codes := nullTerminatedListToGoSlice(cCodes)
+
+		for _, code := range codes {
+			codeList = append(codeList, fmt.Sprintf("%s:%s", auth, code))
+		}
+	}
+	return codeList, nil
+}
+
 // errnoString returns the text representation of errno.
 func (c *Context) errnoString(errno int) string {
 	c.Lock()
@@ -188,6 +240,14 @@ func (c *Context) newPJ(cPJ *C.PJ) (*PJ, error) {
 	return pj, nil
 }
 
+func (c *Context) checkError() error {
+	errno := int(C.proj_context_errno(c.pjContext))
+	if errno == 0 {
+		return nil
+	}
+	return c.newError(errno)
+}
+
 // SetLogLevel sets the log level for the default context.
 func SetLogLevel(logLevel LogLevel) {
 	defaultContext.SetLogLevel(logLevel)
@@ -211,4 +271,31 @@ func NewCRSToCRS(sourceCRS, targetCRS string, area *Area) (*PJ, error) {
 // NewCRSToCRSFromPJ returns a new PJ from two CRSs.
 func NewCRSToCRSFromPJ(sourcePJ, targetPJ *PJ, area *Area, options string) (*PJ, error) {
 	return defaultContext.NewCRSToCRSFromPJ(sourcePJ, targetPJ, area, options)
+}
+
+func GetAuthoritiesFromDatabase() ([]string, error) {
+	return defaultContext.GetAuthoritiesFromDatabase()
+}
+
+func GetAllCRSCodes() ([]string, error) {
+	return defaultContext.GetAllCRSCodes()
+}
+
+func nullTerminatedListToGoSlice(res **C.char) []string {
+	goStrings := make([]string, 0)
+	for {
+		if res == nil {
+			break
+		}
+
+		cstr := *res
+		if cstr == nil {
+			break
+		}
+
+		goStrings = append(goStrings, C.GoString(cstr))
+
+		res = (**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(res)) + unsafe.Sizeof(cstr)))
+	}
+	return goStrings
 }

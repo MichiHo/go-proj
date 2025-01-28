@@ -624,3 +624,95 @@ func assertInDeltaFloat64Slices(tb testing.TB, expected, actual [][]float64, del
 		assertInDeltaFloat64Slice(tb, expected[i], actual[i], delta)
 	}
 }
+
+func Test_GetSRID(t *testing.T) {
+	testCases := map[string]struct {
+		input        string
+		expectedAuth string
+		expectedCode string
+	}{
+		"no name detected from custom WKT": {
+			input: `GEOGCRS["WGS 84",
+    ENSEMBLE["World Geodetic System 1984 ensemble",
+        MEMBER["World Geodetic System 1984 (Transit)"],
+        MEMBER["World Geodetic System 1984 (G730)"],
+        MEMBER["World Geodetic System 1984 (G873)"],
+        MEMBER["World Geodetic System 1984 (G1150)"],
+        MEMBER["World Geodetic System 1984 (G1674)"],
+        MEMBER["World Geodetic System 1984 (G1762)"],
+        MEMBER["World Geodetic System 1984 (G2139)"],
+        ELLIPSOID["WGS 84",6378137,298.257223563,
+            LENGTHUNIT["metre",1]],
+        ENSEMBLEACCURACY[2.0]],
+    PRIMEM["Greenwich",0,
+        ANGLEUNIT["degree",0.174532925199433]],
+    CS[ellipsoidal,2],
+        AXIS["geodetic latitude (Lat)",north,
+            ORDER[1],
+            ANGLEUNIT["degree",0.1174532925199433]],
+        AXIS["geodetic longitude (Lon)",east,
+            ORDER[2],
+            ANGLEUNIT["degree",0.132925199433]],
+    USAGE[
+        SCOPE["Horizontal component of 3D system."],
+        AREA["World."],
+        BBOX[-90,-180,90,180]],
+    ID["EPSG",4326]]`,
+			expectedAuth: "",
+			expectedCode: "",
+		},
+		"EPSG:4326 detected from WKT": {
+			input: `GEOGCRS["WGS 84",
+    ENSEMBLE["World Geodetic System 1984 ensemble",
+        MEMBER["World Geodetic System 1984 (Transit)"],
+        MEMBER["World Geodetic System 1984 (G730)"],
+        MEMBER["World Geodetic System 1984 (G873)"],
+        MEMBER["World Geodetic System 1984 (G1150)"],
+        MEMBER["World Geodetic System 1984 (G1674)"],
+        MEMBER["World Geodetic System 1984 (G1762)"],
+        MEMBER["World Geodetic System 1984 (G2139)"],
+        ELLIPSOID["WGS 84",6378137,298.257223563,
+            LENGTHUNIT["metre",1]],
+        ENSEMBLEACCURACY[2.0]],
+    PRIMEM["Greenwich",0,
+        ANGLEUNIT["degree",0.0174532925199433]],
+    CS[ellipsoidal,2],
+        AXIS["geodetic latitude (Lat)",north,
+            ORDER[1],
+            ANGLEUNIT["degree",0.0174532925199433]],
+        AXIS["geodetic longitude (Lon)",east,
+            ORDER[2],
+            ANGLEUNIT["degree",0.0174532925199433]],
+    USAGE[
+        SCOPE["Horizontal component of 3D system."],
+        AREA["World."],
+        BBOX[-90,-180,90,180]],
+    ID["EPSG",4326]]`,
+			expectedAuth: "EPSG",
+			expectedCode: "4326",
+		},
+		"EPSG:4326 detected from SRID": {
+			input:        "EPSG:4326",
+			expectedAuth: "EPSG",
+			expectedCode: "4326",
+		},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			pj, err := proj.New(tc.input)
+			if err != nil {
+				t.Fatalf("unexpected error when creating new PJ object %s", err.Error())
+			}
+
+			auth, code := pj.GetSRID()
+			if auth != tc.expectedAuth {
+				t.Fatalf("expected authority %s, got %s", tc.expectedAuth, auth)
+			}
+
+			if code != tc.expectedCode {
+				t.Fatalf("expected code %s, got %s", tc.expectedCode, code)
+			}
+
+		})
+	}
+}
