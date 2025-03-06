@@ -209,13 +209,29 @@ func (t PJ_TYPE) String() string {
 		"PARAMETRIC_DATUM"}[t]
 }
 
-// GetType returns the type of
+// GetType returns the type of the Projection
 func (pj *PJ) GetType() PJ_TYPE {
 	pj.context.Lock()
 	defer pj.context.Unlock()
 
-	auth_ := C.proj_get_type(pj.pj)
-	return PJ_TYPE(auth_)
+	pjType := C.proj_get_type(pj.pj)
+	return PJ_TYPE(pjType)
+}
+
+// AsProjJson gives the definition of the PJ in ProjJson format
+func (pj *PJ) AsProjJson() (string, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	projjson := C.proj_as_projjson(pj.context.pjContext, pj.pj, nil)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return "", pj.context.newError(errno)
+	}
+
+	return C.GoString(projjson), nil
 }
 
 // Inverse transforms coord in the inverse direction.
