@@ -4,6 +4,7 @@ package proj
 import "C"
 
 import (
+	"fmt"
 	"unsafe"
 )
 
@@ -25,11 +26,43 @@ type PJ struct {
 
 // A PJInfo contains information about a PJ.
 type PJInfo struct {
-	ID          string
-	Description string
-	Definition  string
-	HasInverse  bool
-	Accuracy    float64
+	ID          string  // Short ID of the operation the PJ object is based on, that is, what comes after the +proj= in a proj-string, e.g. "merc".
+	Description string  // Long describes of the operation the PJ object is based on, e.g. "Mercator Cyl, Sph&Ell lat_ts=".
+	Definition  string  // The proj-string that was used to create the PJ object with, e.g. "+proj=merc +lat_0=24 +lon_0=53 +ellps=WGS84".
+	HasInverse  bool    // True if an inverse mapping of the defined operation exists.
+	Accuracy    float64 // Expected accuracy of the transformation. -1 if unknown.
+}
+
+type SRID struct {
+	Auth string
+	Code string
+}
+
+func (s SRID) String() string {
+	if s.Auth == "" && s.Code == "" {
+		return ""
+	}
+	return s.Auth + ":" + s.Code
+}
+
+// FullPJInfo is a shorthand to contain more info about a PJ from different C methods
+type FullPJInfo struct {
+	PJInfo
+	IsCrs      bool // True if this is a CRS
+	Type       PJType
+	CrsMatches []IdentifyMatchInfo // If this is a CRS, this list contains all matches from the database
+}
+
+type IdentifyMatchInfo struct {
+	SRID       SRID
+	Confidence int
+}
+
+// A match from the Identify() method. For the meanings of confidence consult
+// https://proj.org/en/stable/development/reference/functions.html#c.proj_identify
+type IdentifyMatch struct {
+	PJ         *PJ
+	Confidence int
 }
 
 // Destroy releases all resources associated with pj.
@@ -115,17 +148,126 @@ func (pj *PJ) Info() PJInfo {
 	}
 }
 
-// GetSRID returns the Spatial Reference Identifier, like "EPSG","4326", for pj.
-func (pj *PJ) GetSRID() (auth string, code string) {
+// FullInfo is a convenience method combining other methods to get plenty of
+// info on a PJ object.
+func (pj *PJ) FullInfo() (*FullPJInfo, error) {
+	var err error
+	result := &FullPJInfo{}
+
+	result.PJInfo = pj.Info()
+	result.IsCrs = pj.IsCRS()
+	result.Type, err = pj.GetType()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PJ type: %w", err)
+	}
+
+	if result.IsCrs {
+		matches, err := pj.Identify()
+		if err != nil {
+			return nil, fmt.Errorf("failed to identify CRS: %w", err)
+		}
+
+		for _, m := range matches {
+			result.CrsMatches = append(result.CrsMatches, IdentifyMatchInfo{
+				SRID:       m.PJ.GetSRID(),
+				Confidence: m.Confidence,
+			})
+		}
+	}
+
+	return result, nil
+}
+
+// Identify tries to match the given pj against the database of known CRS'
+// and returns matches.
+// TODO: implement restricting authorities when needed
+func (pj *PJ) Identify() ([]IdentifyMatch, error) {
+	var confidenceList *C.int
+	objList, err := pj.identifyRaw(&confidenceList)
+	if err != nil {
+		return nil, fmt.Errorf("failed to proj_identify: %w", err)
+	}
+
+	defer C.proj_list_destroy(objList)
+	defer C.proj_int_list_destroy(confidenceList)
+
+	matches, err := readPjList(objList, pj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read PJ_OBJ_LIST to go slice: %w", err)
+	}
+
+	confidenceSlice := (*[1 << 30]C.int)(unsafe.Pointer(confidenceList))[:len(matches):len(matches)]
+
+	result := make([]IdentifyMatch, 0, len(matches))
+	for i, match := range matches {
+		result = append(result, IdentifyMatch{
+			PJ:         match,
+			Confidence: int(confidenceSlice[i]),
+		})
+	}
+
+	return result, nil
+}
+
+func (pj *PJ) identifyRaw(confidenceList **C.int) (*C.PJ_OBJ_LIST, error) {
 	pj.context.Lock()
 	defer pj.context.Unlock()
 
-	auth_ := C.proj_get_id_auth_name(pj.pj, 0)
-	auth = C.GoString(auth_)
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
 
-	code_ := C.proj_get_id_code(pj.pj, 0)
-	code = C.GoString(code_)
-	return
+	objList := C.proj_identify(pj.context.pjContext, pj.pj, nil, nil, confidenceList)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return nil, pj.context.newError(errno)
+	}
+
+	return objList, nil
+}
+
+func readPjList(list *C.PJ_OBJ_LIST, referencePj *PJ) ([]*PJ, error) {
+	count := int(C.proj_list_get_count(list))
+
+	result := make([]*PJ, 0, count)
+	for i := 0; i < count; i++ {
+		rawPj, err := projListGet(list, i, referencePj)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get item %d from PJ_OBJ_LIST: %w", i, err)
+		}
+
+		newPj, err := referencePj.context.newPJ(rawPj)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert item %d to go PJ type: %w", i, err)
+		}
+
+		result = append(result, newPj)
+	}
+	return result, nil
+}
+
+func projListGet(list *C.PJ_OBJ_LIST, index int, referencePj *PJ) (*C.PJ, error) {
+	lastErrno := C.proj_errno_reset(referencePj.pj)
+	defer C.proj_errno_restore(referencePj.pj, lastErrno)
+
+	p := C.proj_list_get(referencePj.context.pjContext, list, C.int(index))
+	if errno := int(C.proj_errno(referencePj.pj)); errno != 0 {
+		return nil, referencePj.context.newError(errno)
+	}
+
+	return p, nil
+}
+
+// GetSRID returns the Spatial Reference Identifier, like "EPSG","4326", for pj.
+func (pj *PJ) GetSRID() SRID {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	auth := C.proj_get_id_auth_name(pj.pj, 0)
+
+	code := C.proj_get_id_code(pj.pj, 0)
+	return SRID{
+		Auth: C.GoString(auth),
+		Code: C.GoString(code),
+	}
 }
 
 // IsCRS returns whether pj is a CRS.
@@ -133,89 +275,136 @@ func (pj *PJ) IsCRS() bool {
 	return C.proj_is_crs(pj.pj) != 0
 }
 
-type PJ_TYPE int
+type PJType string
 
 const (
-	PJ_TYPE_UNKNOWN PJ_TYPE = iota
+	PJ_TYPE_UNKNOWN                          PJType = "UNKNOWN"
+	PJ_TYPE_ELLIPSOID                        PJType = "ELLIPSOID"
+	PJ_TYPE_PRIME_MERIDIAN                   PJType = "PRIME_MERIDIAN"
+	PJ_TYPE_GEODETIC_REFERENCE_FRAME         PJType = "GEODETIC_REFERENCE_FRAME"
+	PJ_TYPE_DYNAMIC_GEODETIC_REFERENCE_FRAME PJType = "DYNAMIC_GEODETIC_REFERENCE_FRAME"
+	PJ_TYPE_VERTICAL_REFERENCE_FRAME         PJType = "VERTICAL_REFERENCE_FRAME"
+	PJ_TYPE_DYNAMIC_VERTICAL_REFERENCE_FRAME PJType = "DYNAMIC_VERTICAL_REFERENCE_FRAME"
+	PJ_TYPE_DATUM_ENSEMBLE                   PJType = "DATUM_ENSEMBLE"
 
-	PJ_TYPE_ELLIPSOID
+	// Abstract type, not returned by proj_get_type()
+	PJ_TYPE_CRS PJType = "CRS"
 
-	PJ_TYPE_PRIME_MERIDIAN
+	PJ_TYPE_GEODETIC_CRS   PJType = "GEODETIC_CRS"
+	PJ_TYPE_GEOCENTRIC_CRS PJType = "GEOCENTRIC_CRS"
 
-	PJ_TYPE_GEODETIC_REFERENCE_FRAME
-	PJ_TYPE_DYNAMIC_GEODETIC_REFERENCE_FRAME
-	PJ_TYPE_VERTICAL_REFERENCE_FRAME
-	PJ_TYPE_DYNAMIC_VERTICAL_REFERENCE_FRAME
-	PJ_TYPE_DATUM_ENSEMBLE
+	// Abstract type, not returned by proj_get_type()
+	PJ_TYPE_GEOGRAPHIC_CRS PJType = "GEOGRAPHIC_CRS"
 
-	/** Abstract type not returned by proj_get_type() */
-	PJ_TYPE_CRS
+	PJ_TYPE_GEOGRAPHIC_2D_CRS PJType = "GEOGRAPHIC_2D_CRS"
+	PJ_TYPE_GEOGRAPHIC_3D_CRS PJType = "GEOGRAPHIC_3D_CRS"
+	PJ_TYPE_VERTICAL_CRS      PJType = "VERTICAL_CRS"
+	PJ_TYPE_PROJECTED_CRS     PJType = "PROJECTED_CRS"
+	PJ_TYPE_COMPOUND_CRS      PJType = "COMPOUND_CRS"
+	PJ_TYPE_TEMPORAL_CRS      PJType = "TEMPORAL_CRS"
+	PJ_TYPE_ENGINEERING_CRS   PJType = "ENGINEERING_CRS"
+	PJ_TYPE_BOUND_CRS         PJType = "BOUND_CRS"
+	PJ_TYPE_OTHER_CRS         PJType = "OTHER_CRS"
 
-	PJ_TYPE_GEODETIC_CRS
-	PJ_TYPE_GEOCENTRIC_CRS
+	PJ_TYPE_CONVERSION                 PJType = "CONVERSION"
+	PJ_TYPE_TRANSFORMATION             PJType = "TRANSFORMATION"
+	PJ_TYPE_CONCATENATED_OPERATION     PJType = "CONCATENATED_OPERATION"
+	PJ_TYPE_OTHER_COORDINATE_OPERATION PJType = "OTHER_COORDINATE_OPERATION"
 
-	/** proj_get_type() will never return that type but
-	 * PJ_TYPE_GEOGRAPHIC_2D_CRS or PJ_TYPE_GEOGRAPHIC_3D_CRS. */
-	PJ_TYPE_GEOGRAPHIC_CRS
+	PJ_TYPE_TEMPORAL_DATUM    PJType = "TEMPORAL_DATUM"
+	PJ_TYPE_ENGINEERING_DATUM PJType = "ENGINEERING_DATUM"
+	PJ_TYPE_PARAMETRIC_DATUM  PJType = "PARAMETRIC_DATUM"
 
-	PJ_TYPE_GEOGRAPHIC_2D_CRS
-	PJ_TYPE_GEOGRAPHIC_3D_CRS
-	PJ_TYPE_VERTICAL_CRS
-	PJ_TYPE_PROJECTED_CRS
-	PJ_TYPE_COMPOUND_CRS
-	PJ_TYPE_TEMPORAL_CRS
-	PJ_TYPE_ENGINEERING_CRS
-	PJ_TYPE_BOUND_CRS
-	PJ_TYPE_OTHER_CRS
+	PJ_TYPE_DERIVED_PROJECTED_CRS PJType = "DERIVED_PROJECTED_CRS"
 
-	PJ_TYPE_CONVERSION
-	PJ_TYPE_TRANSFORMATION
-	PJ_TYPE_CONCATENATED_OPERATION
-	PJ_TYPE_OTHER_COORDINATE_OPERATION
-
-	PJ_TYPE_TEMPORAL_DATUM
-	PJ_TYPE_ENGINEERING_DATUM
-	PJ_TYPE_PARAMETRIC_DATUM
+	PJ_TYPE_COORDINATE_METADATA PJType = "COORDINATE_METADATA"
 )
 
-func (t PJ_TYPE) String() string {
-	return []string{"UNKNOWN",
-		"ELLIPSOID",
-		"PRIME_MERIDIAN",
-		"GEODETIC_REFERENCE_FRAME",
-		"DYNAMIC_GEODETIC_REFERENCE_FRAME",
-		"VERTICAL_REFERENCE_FRAME",
-		"DYNAMIC_VERTICAL_REFERENCE_FRAME",
-		"DATUM_ENSEMBLE",
-		"CRS",
-		"GEODETIC_CRS",
-		"GEOCENTRIC_CRS",
-		"GEOGRAPHIC_CRS",
-		"GEOGRAPHIC_2D_CRS",
-		"GEOGRAPHIC_3D_CRS",
-		"VERTICAL_CRS",
-		"PROJECTED_CRS",
-		"COMPOUND_CRS",
-		"TEMPORAL_CRS",
-		"ENGINEERING_CRS",
-		"BOUND_CRS",
-		"OTHER_CRS",
-		"CONVERSION",
-		"TRANSFORMATION",
-		"CONCATENATED_OPERATION",
-		"OTHER_COORDINATE_OPERATION",
-		"TEMPORAL_DATUM",
-		"ENGINEERING_DATUM",
-		"PARAMETRIC_DATUM"}[t]
+func PJTypeFromC(cType C.PJ_TYPE) (PJType, error) {
+	switch cType {
+
+	case C.PJ_TYPE_UNKNOWN:
+		return PJ_TYPE_UNKNOWN, nil
+
+	case C.PJ_TYPE_ELLIPSOID:
+		return PJ_TYPE_ELLIPSOID, nil
+
+	case C.PJ_TYPE_PRIME_MERIDIAN:
+		return PJ_TYPE_PRIME_MERIDIAN, nil
+
+	case C.PJ_TYPE_GEODETIC_REFERENCE_FRAME:
+		return PJ_TYPE_GEODETIC_REFERENCE_FRAME, nil
+	case C.PJ_TYPE_DYNAMIC_GEODETIC_REFERENCE_FRAME:
+		return PJ_TYPE_DYNAMIC_GEODETIC_REFERENCE_FRAME, nil
+	case C.PJ_TYPE_VERTICAL_REFERENCE_FRAME:
+		return PJ_TYPE_VERTICAL_REFERENCE_FRAME, nil
+	case C.PJ_TYPE_DYNAMIC_VERTICAL_REFERENCE_FRAME:
+		return PJ_TYPE_DYNAMIC_VERTICAL_REFERENCE_FRAME, nil
+	case C.PJ_TYPE_DATUM_ENSEMBLE:
+		return PJ_TYPE_DATUM_ENSEMBLE, nil
+	case C.PJ_TYPE_CRS:
+		return PJ_TYPE_CRS, nil
+
+	case C.PJ_TYPE_GEODETIC_CRS:
+		return PJ_TYPE_GEODETIC_CRS, nil
+	case C.PJ_TYPE_GEOCENTRIC_CRS:
+		return PJ_TYPE_GEOCENTRIC_CRS, nil
+	case C.PJ_TYPE_GEOGRAPHIC_CRS:
+		return PJ_TYPE_GEOGRAPHIC_CRS, nil
+
+	case C.PJ_TYPE_GEOGRAPHIC_2D_CRS:
+		return PJ_TYPE_GEOGRAPHIC_2D_CRS, nil
+	case C.PJ_TYPE_GEOGRAPHIC_3D_CRS:
+		return PJ_TYPE_GEOGRAPHIC_3D_CRS, nil
+	case C.PJ_TYPE_VERTICAL_CRS:
+		return PJ_TYPE_VERTICAL_CRS, nil
+	case C.PJ_TYPE_PROJECTED_CRS:
+		return PJ_TYPE_PROJECTED_CRS, nil
+	case C.PJ_TYPE_COMPOUND_CRS:
+		return PJ_TYPE_COMPOUND_CRS, nil
+	case C.PJ_TYPE_TEMPORAL_CRS:
+		return PJ_TYPE_TEMPORAL_CRS, nil
+	case C.PJ_TYPE_ENGINEERING_CRS:
+		return PJ_TYPE_ENGINEERING_CRS, nil
+	case C.PJ_TYPE_BOUND_CRS:
+		return PJ_TYPE_BOUND_CRS, nil
+	case C.PJ_TYPE_OTHER_CRS:
+		return PJ_TYPE_OTHER_CRS, nil
+
+	case C.PJ_TYPE_CONVERSION:
+		return PJ_TYPE_CONVERSION, nil
+	case C.PJ_TYPE_TRANSFORMATION:
+		return PJ_TYPE_TRANSFORMATION, nil
+	case C.PJ_TYPE_CONCATENATED_OPERATION:
+		return PJ_TYPE_CONCATENATED_OPERATION, nil
+	case C.PJ_TYPE_OTHER_COORDINATE_OPERATION:
+		return PJ_TYPE_OTHER_COORDINATE_OPERATION, nil
+
+	case C.PJ_TYPE_TEMPORAL_DATUM:
+		return PJ_TYPE_TEMPORAL_DATUM, nil
+	case C.PJ_TYPE_ENGINEERING_DATUM:
+		return PJ_TYPE_ENGINEERING_DATUM, nil
+	case C.PJ_TYPE_PARAMETRIC_DATUM:
+		return PJ_TYPE_PARAMETRIC_DATUM, nil
+
+	case C.PJ_TYPE_DERIVED_PROJECTED_CRS:
+		return PJ_TYPE_DERIVED_PROJECTED_CRS, nil
+
+	case C.PJ_TYPE_COORDINATE_METADATA:
+		return PJ_TYPE_COORDINATE_METADATA, nil
+
+	default:
+		return "", fmt.Errorf("unexpected PJ_TYPE: %d", cType)
+	}
 }
 
 // GetType returns the type of the Projection
-func (pj *PJ) GetType() PJ_TYPE {
+func (pj *PJ) GetType() (PJType, error) {
 	pj.context.Lock()
 	defer pj.context.Unlock()
 
 	pjType := C.proj_get_type(pj.pj)
-	return PJ_TYPE(pjType)
+	return PJTypeFromC(pjType)
 }
 
 // AsProjJson gives the definition of the PJ in ProjJson format

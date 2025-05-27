@@ -163,7 +163,7 @@ func Test_GetAuthoritiesFromDatabase(t *testing.T) {
 	}
 
 	assertSliceEqualOrderInvariant(t, []string{
-		"EPSG", "ESRI", "IAU_2015", "IGNF", "NKG", "PROJ", "OGC",
+		"EPSG", "ESRI", "IAU_2015", "IGNF", "NKG", "PROJ", "OGC", "NRCAN",
 	}, res)
 }
 
@@ -172,11 +172,12 @@ func Test_GetAllCRSCodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error %s", err.Error())
 	}
-
-	expectedLength := 10889
-	if len(res) != expectedLength {
-		t.Errorf("unexpected length of codes list: %d, expected %d", len(res), expectedLength)
+	expectedLengths := map[int]int{
+		8: 10889,
+		9: 11615,
 	}
+
+	assert.Equal(t, expectedLengths[proj.VersionMajor], len(res), "unexpected length of codes")
 }
 
 func assertSliceEqualOrderInvariant(tb testing.TB, expected, actual []string) {

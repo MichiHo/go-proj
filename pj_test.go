@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/alecthomas/assert/v2"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/michiho/go-proj/v10"
 )
@@ -704,15 +705,295 @@ func Test_GetSRID(t *testing.T) {
 				t.Fatalf("unexpected error when creating new PJ object %s", err.Error())
 			}
 
-			auth, code := pj.GetSRID()
-			if auth != tc.expectedAuth {
-				t.Fatalf("expected authority %s, got %s", tc.expectedAuth, auth)
+			srid := pj.GetSRID()
+			assert.Equal(t, tc.expectedAuth, srid.Auth, "unexpected auth")
+			assert.Equal(t, tc.expectedCode, srid.Code, "unexpected code")
+
+		})
+	}
+}
+
+func Test_AsProjJson(t *testing.T) {
+	all, err := proj.GetAllCRSCodes()
+	if err != nil {
+		t.Fatalf("unexpected error when listing all %s", err.Error())
+	}
+	for _, code := range all {
+		pj, err := proj.New(code)
+		if err != nil {
+			t.Fatalf("unexpected error when creating new PJ object %s", err.Error())
+		}
+
+		str, err := pj.AsProjJson()
+		if err != nil {
+			t.Errorf("failed to get projjson: %s", err.Error())
+		}
+
+		if len(str) == 0 {
+			t.Error("expected non-empty string")
+		}
+	}
+
+}
+
+func Test_FullInfo(t *testing.T) {
+	testCases := map[string]struct {
+		input          string
+		expectedResult *proj.FullPJInfo
+	}{
+
+		// NON-CRS
+
+		"ellipsoid": {
+			input: `ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]`,
+			expectedResult: &proj.FullPJInfo{
+				PJInfo: proj.PJInfo{
+					Description: "GRS 1980",
+					Accuracy:    -1,
+				},
+				Type: proj.PJ_TYPE_ELLIPSOID,
+			},
+		},
+		"conversion": {
+			input: `CONVERSION["UTM zone 33N",
+  METHOD["Transverse Mercator"],
+  PARAMETER["Latitude of natural origin",0],
+  PARAMETER["Longitude of natural origin",15],
+  PARAMETER["Scale factor at natural origin",0.9996],
+  PARAMETER["False easting",500000],
+  PARAMETER["False northing",0]]
+`,
+			expectedResult: &proj.FullPJInfo{
+				PJInfo: proj.PJInfo{
+					ID:          "utm",
+					Description: "UTM zone 33N",
+					Definition:  "proj=utm zone=33 ellps=GRS80",
+					HasInverse:  true,
+				},
+				Type: proj.PJ_TYPE_CONVERSION,
+			},
+		},
+		"other_coordinate_operation": {
+			input: `+proj=longlat +datum=WGS84 +no_defs`,
+			expectedResult: &proj.FullPJInfo{
+				PJInfo: proj.PJInfo{
+					ID:          "longlat",
+					Description: "PROJ-based coordinate operation",
+					Definition:  "proj=longlat datum=WGS84 no_defs ellps=WGS84 towgs84=0,0,0",
+					HasInverse:  true,
+					Accuracy:    -1,
+				},
+				Type: proj.PJ_TYPE_OTHER_COORDINATE_OPERATION,
+			},
+		},
+
+		// CRS
+
+		"geographic_2d_crs": {
+			input: `GEOGCRS["WGS 84",
+  DATUM["World Geodetic System 1984",
+    ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]]],
+  PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],
+  CS[ellipsoidal,2],
+  AXIS["latitude",north],
+  AXIS["longitude",east],
+  ANGLEUNIT["degree",0.0174532925199433]]`,
+			expectedResult: &proj.FullPJInfo{
+				PJInfo: proj.PJInfo{
+					Description: "WGS 84",
+					Accuracy:    -1,
+				},
+				IsCrs: true,
+				Type:  proj.PJ_TYPE_GEOGRAPHIC_2D_CRS,
+				CrsMatches: []proj.IdentifyMatchInfo{{
+					SRID:       proj.SRID{Auth: "EPSG", Code: "4326"},
+					Confidence: 100,
+				}},
+			},
+		},
+		"geocentric_crs": {
+			// +proj=geocent +ellps=GRS80 +units=m +no_defs +type=crs
+			input: `GEODCRS["TWD97",DATUM["Taiwan Datum 1997",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],CS[Cartesian,3],AXIS["(X)",geocentricX,ORDER[1],LENGTHUNIT["metre",1]],AXIS["(Y)",geocentricY,ORDER[2],LENGTHUNIT["metre",1]],AXIS["(Z)",geocentricZ,ORDER[3],LENGTHUNIT["metre",1]],USAGE[SCOPE["Geodesy."],AREA["Taiwan, Republic of China - onshore and offshore - Taiwan Island, Penghu (Pescadores) Islands."],BBOX[17.36,114.32,26.96,123.61]],ID["EPSG",3822]]`,
+			expectedResult: &proj.FullPJInfo{
+				PJInfo: proj.PJInfo{
+					Description: "TWD97",
+					Accuracy:    -1,
+				},
+				IsCrs: true,
+				Type:  proj.PJ_TYPE_GEOCENTRIC_CRS,
+				CrsMatches: []proj.IdentifyMatchInfo{{
+					SRID:       proj.SRID{"EPSG", "3822"},
+					Confidence: 100,
+				}},
+			},
+		},
+		"projected_crs": {
+			input: `PROJCRS["WGS 84 / UTM zone 33N",
+  BASEGEOGCRS["WGS 84",
+    DATUM["World Geodetic System 1984",
+      ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]]],
+    PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],
+    CS[ellipsoidal,2],
+    AXIS["latitude",north],
+    AXIS["longitude",east],
+    ANGLEUNIT["degree",0.0174532925199433]],
+  CONVERSION["UTM zone 33N",
+    METHOD["Transverse Mercator"],
+    PARAMETER["Latitude of natural origin",0],
+    PARAMETER["Longitude of natural origin",15],
+    PARAMETER["Scale factor at natural origin",0.9996],
+    PARAMETER["False easting",500000],
+    PARAMETER["False northing",0]],
+  CS[Cartesian,2],
+  AXIS["easting",east],
+  AXIS["northing",north],
+  LENGTHUNIT["metre",1]]
+`,
+			expectedResult: &proj.FullPJInfo{
+				PJInfo: proj.PJInfo{
+					Description: "WGS 84 / UTM zone 33N",
+					Accuracy:    -1,
+				},
+				IsCrs:      true,
+				Type:       proj.PJ_TYPE_PROJECTED_CRS,
+				CrsMatches: []proj.IdentifyMatchInfo{{proj.SRID{"EPSG", "32633"}, 100}},
+			},
+		},
+		"vertical_crs": {
+			input: `VERTCRS["EGM96 height",
+  VDATUM["EGM96 geoid"],
+  CS[vertical,1],
+  AXIS["gravity-related height",up],
+  LENGTHUNIT["metre",1]]
+`,
+			expectedResult: &proj.FullPJInfo{
+				PJInfo: proj.PJInfo{
+					Description: "EGM96 height",
+					Accuracy:    -1,
+				},
+				IsCrs: true,
+				Type:  proj.PJ_TYPE_VERTICAL_CRS,
+				CrsMatches: []proj.IdentifyMatchInfo{{
+					SRID:       proj.SRID{"EPSG", "5773"},
+					Confidence: 100,
+				}},
+			},
+		},
+		"compound_crs": {
+			input: `COMPOUNDCRS["WGS 84 + EGM96 height",
+  GEOGCRS["WGS 84",
+    DATUM["World Geodetic System 1984",
+      ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]]],
+    PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],
+    CS[ellipsoidal,2],
+    AXIS["latitude",north],
+    AXIS["longitude",east],
+    ANGLEUNIT["degree",0.0174532925199433]],
+  VERTCRS["EGM96 height",
+    VDATUM["EGM96 geoid"],
+    CS[vertical,1],
+    AXIS["gravity-related height",up],
+    LENGTHUNIT["metre",1]]]
+`,
+			expectedResult: &proj.FullPJInfo{
+				PJInfo: proj.PJInfo{
+					Description: "WGS 84 + EGM96 height",
+					Accuracy:    -1,
+				},
+				IsCrs:      true,
+				Type:       proj.PJ_TYPE_COMPOUND_CRS,
+				CrsMatches: []proj.IdentifyMatchInfo{{proj.SRID{"EPSG", "9707"}, 100}},
+			},
+		},
+
+		"engineering_crs": {
+			input: `
+ENGCRS[“A construction site CRS”,
+     EDATUM[“P1”,ANCHOR[“Peg in south corner”]],
+     CS[Cartesian,2],
+       AXIS[“site east”,southWest,ORDER[1]],
+       AXIS[“site north”,southEast,ORDER[2]],
+       LENGTHUNIT[“metre”,1.0],
+     TIMEEXTENT[“date/time t1”,“date/time t2”]]
+`,
+			expectedResult: &proj.FullPJInfo{
+				PJInfo: proj.PJInfo{
+					Description: "A construction site CRS",
+					Accuracy:    -1,
+				},
+				IsCrs: true,
+				Type:  proj.PJ_TYPE_ENGINEERING_CRS,
+			},
+		},
+
+		"crs_proj4": {
+			input: `+proj=longlat +datum=WGS84 +no_defs +type=crs`,
+			expectedResult: &proj.FullPJInfo{
+				PJInfo: proj.PJInfo{
+					Description: "unknown",
+					Accuracy:    -1,
+				},
+				IsCrs: true,
+				Type:  proj.PJ_TYPE_GEOGRAPHIC_2D_CRS,
+				CrsMatches: []proj.IdentifyMatchInfo{
+					{proj.SRID{"OGC", "CRS84"}, 70},
+					{proj.SRID{"IGNF", "WGS84GDD"}, 70},
+					{proj.SRID{"IGNF", "WGS84G"}, 70},
+					{proj.SRID{"EPSG", "4326"}, 70},
+				},
+			},
+		},
+		"fantasy_crs_wkt": {
+			input: `GEOGCRS["Fantasia Datum",
+    ENSEMBLE["Fantasia Geodetic Ensemble",
+        MEMBER["Fantasia Prime"],
+        MEMBER["Fantasia Revision A"],
+        MEMBER["Fantasia Revision B"],
+        ELLIPSOID["Fantasia Ellipsoid",6380000,300,
+            LENGTHUNIT["metre",1]],
+        ENSEMBLEACCURACY[5.0]],
+    PRIMEM["Fantasia Zero Meridian",10,
+        ANGLEUNIT["degree",0.0174532925199433]],
+    CS[ellipsoidal,2],
+        AXIS["funny latitude",north,
+            ORDER[1],
+            ANGLEUNIT["degree",0.0174532925199433]],
+        AXIS["crazy longitude",east,
+            ORDER[2],
+            ANGLEUNIT["degree",0.0174532925199433]],
+    USAGE[
+        SCOPE["Fantasy-based geospatial referencing."],
+        AREA["Imaginary Earth-like planet."],
+        BBOX[-90,-180,90,180]],
+    ID["CUSTOM",999999]]`,
+			expectedResult: &proj.FullPJInfo{
+				PJInfo: proj.PJInfo{
+					Description: "Fantasia Datum",
+					Accuracy:    -1,
+				},
+				IsCrs: true,
+				Type:  proj.PJ_TYPE_GEOGRAPHIC_2D_CRS,
+			},
+		},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+
+			pj, err := proj.New(tc.input)
+			if err != nil {
+				t.Fatalf("failed to create PJ: %s", err.Error())
 			}
 
-			if code != tc.expectedCode {
-				t.Fatalf("expected code %s, got %s", tc.expectedCode, code)
+			info, err := pj.FullInfo()
+			assert.NoError(t, err)
+
+			if err != nil {
+				return
 			}
 
+			if diff := cmp.Diff(tc.expectedResult, info); diff != "" {
+				t.Errorf("unexpected result: %s", diff)
+			}
 		})
 	}
 }
