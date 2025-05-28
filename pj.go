@@ -51,6 +51,7 @@ type FullPJInfo struct {
 	IsCrs      bool // True if this is a CRS
 	Type       PJType
 	CrsMatches []IdentifyMatchInfo // If this is a CRS, this list contains all matches from the database
+	AreaOfUse  *AreaOfUse
 }
 
 type IdentifyMatchInfo struct {
@@ -157,6 +158,7 @@ func (pj *PJ) FullInfo() (*FullPJInfo, error) {
 	result.PJInfo = pj.Info()
 	result.IsCrs = pj.IsCRS()
 	result.Type, err = pj.GetType()
+	result.AreaOfUse = pj.GetAreaOfUse()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PJ type: %w", err)
 	}
@@ -320,7 +322,7 @@ const (
 	PJ_TYPE_COORDINATE_METADATA PJType = "COORDINATE_METADATA"
 )
 
-func PJTypeFromC(cType C.PJ_TYPE) (PJType, error) {
+func mapPJTypeFromC(cType C.PJ_TYPE) (PJType, error) {
 	switch cType {
 
 	case C.PJ_TYPE_UNKNOWN:
@@ -404,7 +406,48 @@ func (pj *PJ) GetType() (PJType, error) {
 	defer pj.context.Unlock()
 
 	pjType := C.proj_get_type(pj.pj)
-	return PJTypeFromC(pjType)
+	return mapPJTypeFromC(pjType)
+}
+
+// AreaOfUse represents the geographic bounding box and area name.
+type AreaOfUse struct {
+	WestLon  float64
+	SouthLat float64
+	EastLon  float64
+	NorthLat float64
+	Name     string
+}
+
+// GetAreaOfUse retrieves the area of use or nil if it is unknown or an error occurred
+func (pj *PJ) GetAreaOfUse() *AreaOfUse {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	var west, south, east, north C.double
+	var name *C.char
+
+	success := C.proj_get_area_of_use(
+		pj.context.pjContext,
+		pj.pj,
+		&west,
+		&south,
+		&east,
+		&north,
+		(**C.char)(&name),
+	)
+
+	if success == 0 {
+		return nil
+	}
+
+	area := &AreaOfUse{
+		WestLon:  float64(west),
+		SouthLat: float64(south),
+		EastLon:  float64(east),
+		NorthLat: float64(north),
+		Name:     C.GoString(name),
+	}
+	return area
 }
 
 // AsProjJson gives the definition of the PJ in ProjJson format

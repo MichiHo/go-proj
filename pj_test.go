@@ -825,6 +825,13 @@ func Test_FullInfo(t *testing.T) {
 					SRID:       proj.SRID{"EPSG", "3822"},
 					Confidence: 100,
 				}},
+				AreaOfUse: &proj.AreaOfUse{
+					WestLon:  114.32,
+					SouthLat: 17.36,
+					EastLon:  123.61,
+					NorthLat: 26.96,
+					Name:     "Taiwan, Republic of China - onshore and offshore - Taiwan Island, Penghu (Pescadores) Islands.",
+				},
 			},
 		},
 		"projected_crs": {
@@ -973,6 +980,13 @@ ENGCRS[“A construction site CRS”,
 				},
 				IsCrs: true,
 				Type:  proj.PJ_TYPE_GEOGRAPHIC_2D_CRS,
+				AreaOfUse: &proj.AreaOfUse{
+					WestLon:  -180,
+					SouthLat: -90,
+					EastLon:  180,
+					NorthLat: 90,
+					Name:     "Imaginary Earth-like planet.",
+				},
 			},
 		},
 	}
