@@ -156,6 +156,34 @@ func (c *Context) NewFromArgs(args ...string) (*PJ, error) {
 	return c.newPJ(C.proj_create_argv(c.pjContext, (C.int)(len(cArgs)), (**C.char)(unsafe.Pointer(&cArgs[0]))))
 }
 
+// PJ PROJ_DLL *proj_create_compound_crs(PJ_CONTEXT *ctx, const char *crs_name,
+//                                       PJ *horiz_crs, PJ *vert_crs);
+
+func (c *Context) CreateCompoundCrs(name string, horizontalPJ *PJ, verticalPJ *PJ) (*PJ, error) {
+	c.Lock()
+	defer c.Unlock()
+
+	if horizontalPJ.context != c {
+		horizontalPJ.context.Lock()
+		defer horizontalPJ.context.Unlock()
+	}
+
+	if verticalPJ.context != c && verticalPJ.context != horizontalPJ.context {
+		verticalPJ.context.Lock()
+		defer verticalPJ.context.Unlock()
+	}
+
+	var cName *C.char
+	// Proj documentation states this field may be NULL, so we only pass a
+	// non-null pointer if the text is not empty
+	if len(name) > 0 {
+		cName := C.CString(name)
+		defer C.free(unsafe.Pointer(cName))
+	}
+
+	return c.newPJ(C.proj_create_compound_crs(c.pjContext, cName, horizontalPJ.pj, verticalPJ.pj))
+}
+
 func (c *Context) Unlock() {
 	c.mutex.Unlock()
 }
@@ -271,6 +299,12 @@ func NewCRSToCRS(sourceCRS, targetCRS string, area *Area) (*PJ, error) {
 // NewCRSToCRSFromPJ returns a new PJ from two CRSs.
 func NewCRSToCRSFromPJ(sourcePJ, targetPJ *PJ, area *Area, options string) (*PJ, error) {
 	return defaultContext.NewCRSToCRSFromPJ(sourcePJ, targetPJ, area, options)
+}
+
+// CreateCompoundCrs creates a compound CRS from two individual PJ objects
+// The name can be the name of the GeographicCRS or empty
+func CreateCompoundCrs(name string, horizontalPJ *PJ, verticalPJ *PJ) (*PJ, error) {
+	return defaultContext.CreateCompoundCrs(name, horizontalPJ, verticalPJ)
 }
 
 func GetAuthoritiesFromDatabase() ([]string, error) {

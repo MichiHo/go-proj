@@ -180,6 +180,33 @@ func Test_GetAllCRSCodes(t *testing.T) {
 	assert.Equal(t, expectedLengths[proj.VersionMajor], len(res), "unexpected length of codes")
 }
 
+func Test_CreateCompoundCrs(t *testing.T) {
+	horiz, err := proj.New("EPSG:4326")
+	assert.NoError(t, err, "failed to create horizontal part")
+
+	// EVRF2007 height (Europe) EPSG:5621
+	vert, err := proj.New(`VERT_CS["EVRF2007 height",
+    VERT_DATUM["European Vertical Reference Frame 2007",2005,
+        AUTHORITY["EPSG","5215"]],
+    UNIT["metre",1,
+        AUTHORITY["EPSG","9001"]],
+    AXIS["Gravity-related height",UP],
+    AUTHORITY["EPSG","5621"]]`)
+	assert.NoError(t, err, "failed to create vertical part")
+
+	compound, err := proj.CreateCompoundCrs("", horiz, vert)
+	assert.NoError(t, err, "failed to create compound CRS")
+
+	otherCompound, err := proj.New("EPSG:4326+9390")
+	assert.NoError(t, err, "failed to create other compound CRS")
+
+	transform, err := proj.NewCRSToCRSFromPJ(compound, otherCompound, nil, "")
+	assert.NoError(t, err, "failed to get transformation between both CRS")
+
+	_, err = transform.Forward(proj.NewCoord(10, 54, 42, 0))
+	assert.NoError(t, err, "failed to transform some coord")
+}
+
 func assertSliceEqualOrderInvariant(tb testing.TB, expected, actual []string) {
 	tb.Helper()
 
