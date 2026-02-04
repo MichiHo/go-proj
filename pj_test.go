@@ -1011,3 +1011,25 @@ ENGCRS[“A construction site CRS”,
 		})
 	}
 }
+
+func Test_AsWkt(t *testing.T) {
+	wktTypes := []proj.WKTType{
+		proj.PJ_WKT2_2015,
+		proj.PJ_WKT2_2015_SIMPLIFIED,
+		proj.PJ_WKT2_2019,
+		proj.PJ_WKT2_2018,
+		proj.PJ_WKT2_2019_SIMPLIFIED,
+		proj.PJ_WKT2_2018_SIMPLIFIED,
+		proj.PJ_WKT1_GDAL,
+		proj.PJ_WKT1_ESRI,
+	}
+
+	pj, err := proj.New("EPSG:4326")
+	assert.NoError(t, err)
+
+	for _, typ := range wktTypes {
+		wkt, err := pj.AsWkt(typ)
+		assert.NoError(t, err, "failed for type %s", typ.ToString())
+		assert.NotZero(t, wkt, "expected non-zero result for type %s", typ.ToString())
+	}
+}

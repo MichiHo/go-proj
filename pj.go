@@ -277,6 +277,70 @@ func (pj *PJ) IsCRS() bool {
 	return C.proj_is_crs(pj.pj) != 0
 }
 
+type WKTType C.PJ_WKT_TYPE
+
+const (
+	PJ_WKT2_2015            WKTType = C.PJ_WKT2_2015
+	PJ_WKT2_2015_SIMPLIFIED WKTType = C.PJ_WKT2_2015_SIMPLIFIED
+	PJ_WKT2_2019            WKTType = C.PJ_WKT2_2019
+	PJ_WKT2_2018            WKTType = C.PJ_WKT2_2018
+	PJ_WKT2_2019_SIMPLIFIED WKTType = C.PJ_WKT2_2019_SIMPLIFIED
+	PJ_WKT2_2018_SIMPLIFIED WKTType = C.PJ_WKT2_2018_SIMPLIFIED
+	PJ_WKT1_GDAL            WKTType = C.PJ_WKT1_GDAL
+	PJ_WKT1_ESRI            WKTType = C.PJ_WKT1_ESRI
+)
+
+func (t WKTType) ToString() string {
+	switch t {
+	case PJ_WKT2_2015:
+		return "PJ_WKT2_2015"
+	case PJ_WKT2_2015_SIMPLIFIED:
+		return "PJ_WKT2_2015_SIMPLIFIED"
+	case PJ_WKT2_2018:
+		return "PJ_WKT2_2018"
+	case PJ_WKT2_2018_SIMPLIFIED:
+		return "PJ_WKT2_2018_SIMPLIFIED"
+	case PJ_WKT1_GDAL:
+		return "PJ_WKT1_GDAL"
+	case PJ_WKT1_ESRI:
+		return "PJ_WKT1_ESRI"
+	default:
+		return ""
+	}
+}
+
+// TODO: implement those options in AsWkt()
+// type AsWktOptions struct {
+// 	Multiline                           bool   // MULTILINE
+// 	IndentationWidth                    uint   // INDENTATION_WIDTH
+// 	OutputAxis                          string // OUTPUT_AXIS
+// 	Strict                              bool   // STRICT
+// 	AllowEllipsoidalHeightAsVerticalCrs bool   // ALLOW_ELLIPSOIDAL_HEIGHT_AS_VERTICAL_CRS
+// 	AllowLinunitNode                    bool   // ALLOW_LINUNIT_NODE
+// }
+
+// AsWkt gets a WKT representation of an object. Defaults to Multiline output
+// with indentation level of 4. Options to modify that may be added to this binding
+// if needed
+func (pj *PJ) AsWkt(wktType WKTType) (string, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	wkt := C.proj_as_wkt(pj.context.pjContext, pj.pj, C.PJ_WKT_TYPE(wktType), nil)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return "", pj.context.newError(errno)
+	}
+
+	if wkt == nil {
+		return "", fmt.Errorf("projection not compatible with an export to %s", wktType.ToString())
+	}
+
+	return C.GoString(wkt), nil
+}
+
 type PJType string
 
 const (
