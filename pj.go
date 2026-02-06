@@ -579,6 +579,182 @@ func (pj *PJ) AsProjJson() (string, error) {
 	return C.GoString(projjson), nil
 }
 
+// HasPointMotionOperation returns whether a CRS has an associated PointMotionOperation.
+//
+// A PointMotionOperation is a mathematical operation that describes the change of coordinate values within
+// one coordinate reference system due to the motion of the point between one
+// coordinate epoch and another coordinate epoch.
+// The motion is due to tectonic plate movement or deformation.
+func (pj *PJ) HasPointMotionOperation() (bool, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	result := C.proj_crs_has_point_motion_operation(pj.context.pjContext, pj.pj)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return false, pj.context.newError(errno)
+	}
+
+	return result > 0, nil
+}
+
+// Returns the coordinate system of a SingleCRS.
+func (pj *PJ) GetCoordinateSystem() (*PJ, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	cs := C.proj_crs_get_coordinate_system(pj.context.pjContext, pj.pj)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return nil, pj.context.newError(errno)
+	}
+
+	return pj.context.newPJ(cs)
+}
+
+//////////////////////
+// Datum-related methods
+//
+
+// Get the horizontal datum from a CRS.
+// This function may return a Datum or DatumEnsemble object.
+func (pj *PJ) GetHorizontalDatum() (*PJ, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	datum := C.proj_crs_get_horizontal_datum(pj.context.pjContext, pj.pj)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return nil, pj.context.newError(errno)
+	}
+
+	return pj.context.newPJ(datum)
+}
+
+// Returns the datum of a SingleCRS (not a compound one)
+func (pj *PJ) GetDatum() (*PJ, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	datum := C.proj_crs_get_datum(pj.context.pjContext, pj.pj)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return nil, pj.context.newError(errno)
+	}
+
+	return pj.context.newPJ(datum)
+}
+
+// Returns a datum for a SingleCRS.
+// If the SingleCRS has a datum, then this datum is returned. Otherwise, the SingleCRS has a datum ensemble, and this datum ensemble is returned as a regular datum instead of a datum ensemble.
+func (pj *PJ) GetDatumForced() (*PJ, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	datum := C.proj_crs_get_datum_forced(pj.context.pjContext, pj.pj)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return nil, pj.context.newError(errno)
+	}
+
+	return pj.context.newPJ(datum)
+}
+
+// Returns the datum ensemble of a SingleCRS.
+func (pj *PJ) GetDatumEnsemble() (*PJ, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	datum := C.proj_crs_get_datum_ensemble(pj.context.pjContext, pj.pj)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return nil, pj.context.newError(errno)
+	}
+
+	return pj.context.newPJ(datum)
+}
+
+// Returns the number of members of a datum ensemble. PJ should be of type DatumEnsemble
+func (pj *PJ) DatumEnsembleMemberCount() (int, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	count := C.proj_datum_ensemble_get_member_count(pj.context.pjContext, pj.pj)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return 0, pj.context.newError(errno)
+	}
+
+	return int(count), nil
+}
+
+// Returns the positional accuracy of the datum ensemble.
+func (pj *PJ) DatumEnsembleGetAccuracy() (float64, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	accuracy := C.proj_datum_ensemble_get_accuracy(pj.context.pjContext, pj.pj)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return 0, pj.context.newError(errno)
+	}
+
+	return float64(accuracy), nil
+}
+
+// Returns a member from a datum ensemble.
+func (pj *PJ) DatumEnsembleGetMember(index int) (*PJ, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	member := C.proj_datum_ensemble_get_member(pj.context.pjContext, pj.pj, C.int(index))
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return nil, pj.context.newError(errno)
+	}
+
+	return pj.context.newPJ(member)
+}
+
+// Returns the frame reference epoch of a dynamic geodetic or vertical reference frame,
+// as a decimal year, or -1 in case of error.
+func (pj *PJ) DynamicDatumGetFrameReferenceEpoch() (float64, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	epoch := C.proj_dynamic_datum_get_frame_reference_epoch(pj.context.pjContext, pj.pj)
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return 0, pj.context.newError(errno)
+	}
+
+	return float64(epoch), nil
+}
+
+//////////////////////
+// Transformations
+//
+
 // Inverse transforms coord in the inverse direction.
 func (pj *PJ) Inverse(coord Coord) (Coord, error) {
 	return pj.Trans(DirectionInv, coord)
