@@ -55,8 +55,9 @@ type FullPJInfo struct {
 }
 
 type IdentifyMatchInfo struct {
-	SRID       SRID
-	Confidence int
+	SRID        SRID
+	Description string
+	Confidence  int
 }
 
 // A match from the Identify() method. For the meanings of confidence consult
@@ -171,8 +172,9 @@ func (pj *PJ) FullInfo() (*FullPJInfo, error) {
 
 		for _, m := range matches {
 			result.CrsMatches = append(result.CrsMatches, IdentifyMatchInfo{
-				SRID:       m.PJ.GetSRID(),
-				Confidence: m.Confidence,
+				SRID:        m.PJ.GetSRID(),
+				Description: m.PJ.Info().Description,
+				Confidence:  m.Confidence,
 			})
 		}
 	}
