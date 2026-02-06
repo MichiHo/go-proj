@@ -1036,3 +1036,52 @@ func Test_AsWkt(t *testing.T) {
 		assert.NotZero(t, wkt, "expected non-zero result for type %s", typ.ToString())
 	}
 }
+
+func Test_ListSubCRS(t *testing.T) {
+	compoundPj, err := proj.New("EPSG:5318")
+	assert.NoError(t, err, "failed to create pj")
+
+	subCrs, err := compoundPj.ListSubCRS()
+	assert.NoError(t, err, "failed to list sub-crs")
+
+	assert.Equal(t, 2, len(subCrs))
+	hInfo, err := subCrs[0].FullInfo()
+	assert.NoError(t, err, "get info")
+	assert.Equal(t, proj.FullPJInfo{
+		PJInfo: proj.PJInfo{
+			ID:          "",
+			Description: "ETRS89 / Faroe TM",
+			Definition:  "",
+			HasInverse:  false,
+			Accuracy:    -1,
+		},
+		IsCrs: true,
+		Type:  proj.PJ_TYPE_PROJECTED_CRS,
+		CrsMatches: []proj.IdentifyMatchInfo{{
+			SRID:        proj.SRID{"EPSG", "5316"},
+			Description: "ETRS89 / Faroe TM",
+			Confidence:  100,
+		}},
+		AreaOfUse: hInfo.AreaOfUse, // Don't care about this right now
+	}, *hInfo)
+
+	vInfo, err := subCrs[1].FullInfo()
+	assert.NoError(t, err, "get info")
+	assert.Equal(t, proj.FullPJInfo{
+		PJInfo: proj.PJInfo{
+			ID:          "",
+			Description: "FVR09 height",
+			Definition:  "",
+			HasInverse:  false,
+			Accuracy:    -1,
+		},
+		IsCrs: true,
+		Type:  proj.PJ_TYPE_VERTICAL_CRS,
+		CrsMatches: []proj.IdentifyMatchInfo{{
+			SRID:        proj.SRID{"EPSG", "5317"},
+			Description: "FVR09 height",
+			Confidence:  100,
+		}},
+		AreaOfUse: vInfo.AreaOfUse, // Don't care about this right now
+	}, *vInfo)
+}

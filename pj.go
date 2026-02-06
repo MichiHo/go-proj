@@ -213,6 +213,53 @@ func (pj *PJ) Identify() ([]IdentifyMatch, error) {
 	return result, nil
 }
 
+func (pj *PJ) ListSubCRS() ([]*PJ, error) {
+	pj.context.Lock()
+	defer pj.context.Unlock()
+
+	var result []*PJ
+	finished := false
+	maxTries := 100
+	for i := 0; i < maxTries; i++ {
+		newPj, err := pj.GetSubCRS(i)
+		if err != nil {
+			return nil, err
+		}
+
+		if newPj == nil {
+			finished = true
+			break
+		}
+
+		result = append(result, newPj)
+	}
+	if !finished {
+		return nil, fmt.Errorf("listing sub-crs aborted after %d runs", maxTries)
+	}
+
+	return result, nil
+}
+
+func (pj *PJ) GetSubCRS(index int) (*PJ, error) {
+	lastErrno := C.proj_errno_reset(pj.pj)
+	defer C.proj_errno_restore(pj.pj, lastErrno)
+
+	rawPj := C.proj_crs_get_sub_crs(pj.context.pjContext, pj.pj, C.int(index))
+	if errno := int(C.proj_errno(pj.pj)); errno != 0 {
+		return nil, fmt.Errorf("failed to get sub-crs %d: %w", index, pj.context.newError(errno))
+	}
+
+	if rawPj == nil {
+		return nil, nil
+	}
+
+	newPj, err := pj.context.newPJ(rawPj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sub-pj %d: %w", index, err)
+	}
+	return newPj, nil
+}
+
 func (pj *PJ) identifyRaw(confidenceList **C.int) (*C.PJ_OBJ_LIST, error) {
 	pj.context.Lock()
 	defer pj.context.Unlock()
